@@ -2,6 +2,8 @@
 
 Python driver for GDisplay e-ink screens taken from Imagotag SES ESLs (168×384, tri-color) on Raspberry Pi.
 
+This uses a Waveshare SPI HAT, but this should work with any universal E-Ink HAT.
+
 ## Installation
 
 ```bash
