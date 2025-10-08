@@ -1,7 +1,8 @@
 # *****************************************************************************
 # * | File        :	  esl.py
 # * | Author      :   Liam Cornu
-# * | Function    :   Custom SSD1680 Driver for GDisplay Imagotag SES screens
+# * | Credits     :   Waveshare Team
+# * | Function    :   Custom Driver for GDisplay SES Imagotag screens
 # * | Info        :
 # *----------------
 # * | This version:   V1.2 - Dynamic resolution support
@@ -177,7 +178,7 @@ def module_exit() -> None:
 
 class EPD:
     """
-    E-Paper Display (EPD) driver for SSD1680 controller.
+    E-Paper Display (EPD) driver for SES Imagotag ESL screens (GDisplay).
 
     Provides high-level interface for controlling e-ink displays with
     black/white and red/yellow color support. Handles display initialization,
@@ -260,7 +261,7 @@ class EPD:
         Initialize the e-ink display controller.
 
         Performs hardware initialization sequence including power boost,
-        panel settings, and resolution configuration for the SSD1680 controller.
+        panel settings, and resolution configuration.
 
         Returns:
             0 on success, -1 on failure
