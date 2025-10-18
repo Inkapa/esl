@@ -16,17 +16,10 @@ try:
     epd.init()
     epd.Clear()
 
-    font24 = ImageFont.truetype('Font.ttc', 24)
-    font18 = ImageFont.truetype('Font.ttc', 18)
-    font40 = ImageFont.truetype('Font.ttc', 40)
-
     # Drawing on the image
-    epd.init()
     logging.info("1.Drawing on the image...")
-    # font24 = ImageFont.truetype('Font.ttc', 24)
-    # font18 = ImageFont.truetype('Font.ttc', 18)
 
-    hblackimage, hryimage = epd.separate_colors('yellow.bmp', False)
+    hblackimage, hryimage = epd.separate_colors('image.bmp', False)
     epd.display(epd.getbuffer(hblackimage), epd.getbuffer(hryimage))
     time.sleep(2)
 
