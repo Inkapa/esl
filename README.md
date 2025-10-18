@@ -7,7 +7,12 @@ This uses a Waveshare SPI HAT, but it should work with any universal E-Ink HAT.
 ## Installation
 
 ```bash
-pip install Pillow spidev gpiozero
+sudo apt-get update
+sudo apt-get install python3-pip
+sudo apt-get install python3-pil
+sudo apt-get install python3-numpy
+sudo pip3 install spidev
+sudo apt install python3-gpiozero
 ```
 
 ## Usage
