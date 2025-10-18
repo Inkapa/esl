@@ -23,22 +23,13 @@ import esl
 epd = esl.EPD()
 epd.init()
 
-# Separate colors and display
-HBlack, HRed = epd.separate_colors('image.png')
+# Seperate colour values with Floyd–Steinberg dithering
+HBlack, HRed = epd.separate_colors('photo.jpg', use_dithering=True)
 epd.display(epd.getbuffer(HBlack), epd.getbuffer(HRed))
 
 epd.sleep()
 ```
 
-## Configuration
-
-```python
-# With dithering (photos)
-HBlack, HRed = epd.separate_colors('photo.jpg', use_dithering=True)
-
-# Without dithering (graphics/text)
-HBlack, HRed = epd.separate_colors('logo.png', use_dithering=False)
-```
 
 ## Credits
 
