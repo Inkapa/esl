@@ -2,11 +2,11 @@
 # * | File        :	  esl.py
 # * | Author      :   Liam Cornu
 # * | Credits     :   Waveshare Team
-# * | Function    :   Custom Driver for GDisplay SES Imagotag screens
+# * | Function    :   Custom Driver for 2.9" GDisplay SES Imagotag screens
 # * | Info        :
 # *----------------
-# * | This version:   V1.2 - Dynamic resolution support
-# * | Date        :   2025-10-08
+# * | This version:   V2.0 - Cleaned for ESL display limitations
+# * | Date        :   2025-10-19
 # *****************************************************************************
 
 import time
@@ -16,7 +16,7 @@ from PIL import Image
 import spidev
 import gpiozero
 
-# Display resolution
+# Display resolution (portrait orientation)
 EPD_WIDTH: int = 168
 EPD_HEIGHT: int = 384
 
@@ -57,8 +57,6 @@ class RaspberryPi:
         Sets up GPIO pins for display control and configures SPI device
         for communication with the e-ink display controller.
         """
-
-
         self.SPI = spidev.SpiDev()
         self.GPIO_RST_PIN = gpiozero.LED(self.RST_PIN)
         self.GPIO_DC_PIN = gpiozero.LED(self.DC_PIN)
@@ -89,7 +87,7 @@ class RaspberryPi:
             else:
                 self.GPIO_PWR_PIN.off()
 
-    def digital_read(self, pin):
+    def digital_read(self, pin: int) -> int:
         """
         Read a digital value from a GPIO pin.
 
@@ -107,6 +105,7 @@ class RaspberryPi:
             return self.DC_PIN.value
         elif pin == self.PWR_PIN:
             return self.PWR_PIN.value
+        return 0
 
     def delay_ms(self, delaytime: float) -> None:
         """
@@ -136,7 +135,6 @@ class RaspberryPi:
             0 on success, -1 on failure
         """
         self.GPIO_PWR_PIN.on()
-        # SPI device, bus = 0, device = 0
         self.SPI.open(0, 0)
         self.SPI.max_speed_hz = 4000000
         self.SPI.mode = 0b00
@@ -147,20 +145,53 @@ class RaspberryPi:
         Safely shut down the hardware module.
 
         Closes SPI connection, turns off GPIO pins, and enters
-        zero power consumption mode.
+        zero power consumption mode. Handles already-closed pins gracefully.
         """
         logger.debug("spi end")
-        self.SPI.close()
 
-        self.GPIO_RST_PIN.off()
-        self.GPIO_DC_PIN.off()
-        self.GPIO_PWR_PIN.off()
+        try:
+            self.SPI.close()
+        except Exception as e:
+            logger.debug(f"SPI close error (may already be closed): {e}")
+
+        # Safely turn off pins even if already closed
+        try:
+            self.GPIO_RST_PIN.off()
+        except Exception as e:
+            logger.debug(f"RST pin close error (may already be closed): {e}")
+
+        try:
+            self.GPIO_DC_PIN.off()
+        except Exception as e:
+            logger.debug(f"DC pin close error (may already be closed): {e}")
+
+        try:
+            self.GPIO_PWR_PIN.off()
+        except Exception as e:
+            logger.debug(f"PWR pin close error (may already be closed): {e}")
+
         logger.debug("close 5V, Module enters 0 power consumption ...")
 
-        self.GPIO_RST_PIN.close()
-        self.GPIO_DC_PIN.close()
-        self.GPIO_PWR_PIN.close()
-        self.GPIO_BUSY_PIN.close()
+        # Close GPIO pin objects
+        try:
+            self.GPIO_RST_PIN.close()
+        except Exception as e:
+            logger.debug(f"RST pin object close error: {e}")
+
+        try:
+            self.GPIO_DC_PIN.close()
+        except Exception as e:
+            logger.debug(f"DC pin object close error: {e}")
+
+        try:
+            self.GPIO_PWR_PIN.close()
+        except Exception as e:
+            logger.debug(f"PWR pin object close error: {e}")
+
+        try:
+            self.GPIO_BUSY_PIN.close()
+        except Exception as e:
+            logger.debug(f"BUSY pin object close error: {e}")
 
 
 epdconfig: RaspberryPi = RaspberryPi()
@@ -180,17 +211,33 @@ class EPD:
     """
     E-Paper Display (EPD) driver for SES Imagotag ESL screens (GDisplay).
 
-    Provides high-level interface for controlling e-ink displays with
-    black/white and red/yellow color support. Handles display initialization,
-    image rendering, and power management.
+    Provides interface for controlling e-ink displays with black/white
+    and red/yellow color support.
+
+    DISPLAY CAPABILITIES:
+    ✓ Full screen refresh (168x384, ~21 seconds)
+    ✓ Partial area refresh from (0,0) - preserves static content below
+    ✓ Black/white and red/yellow color support
+    ✓ Portrait (168x384) and landscape (384x168) image handling
+
+    DISPLAY LIMITATIONS:
+    ✗ No speed benefit from partial refresh (~21s for any size)
+    ✗ Partial refresh always starts from (0,0) - position cannot be changed
+    ✗ Red/yellow layer not supported in partial mode
+    ✗ No fast refresh modes
+
+    BEST USE CASES:
+    - Infrequent updates (minutes/hours between changes)
+    - Static information displays (prices, schedules, status boards)
+    - Designs with dynamic top section + static bottom section
 
     Attributes:
         reset_pin (int): GPIO pin for hardware reset
         dc_pin (int): GPIO pin for data/command selection
         busy_pin (int): GPIO pin for busy status monitoring
         cs_pin (int): GPIO pin for chip select
-        width (int): Display width in pixels
-        height (int): Display height in pixels
+        width (int): Display width in pixels (168)
+        height (int): Display height in pixels (384)
     """
 
     def __init__(self) -> None:
@@ -258,7 +305,7 @@ class EPD:
 
     def init(self) -> int:
         """
-        Initialize the e-ink display controller.
+        Initialize the e-ink display controller for full screen mode.
 
         Performs hardware initialization sequence including power boost,
         panel settings, and resolution configuration.
@@ -268,53 +315,60 @@ class EPD:
         """
         if epdconfig.module_init() != 0:
             return -1
-        # EPD hardware init start
+
         self.reset()
 
-        self.send_command(0x06)  # boost
+        self.send_command(0x06)  # Boost
         self.send_data(0x17)
         self.send_data(0x17)
         self.send_data(0x17)
-        self.send_command(0x04)  # POWER_ON
+
+        self.send_command(0x04)  # Power on
         self.ReadBusy()
-        self.send_command(0X00)  # PANEL_SETTING
+
+        self.send_command(0x00)  # Panel setting
         self.send_data(0x8F)
-        self.send_command(0X50)  # VCOM_AND_DATA_INTERVAL_SETTING
+
+        self.send_command(0x50)  # VCOM and data interval setting
         self.send_data(0x77)
 
-        # TCON_RESOLUTION
-        self.send_command(0x61)
+        # Set resolution
+        self.send_command(0x61)  # TCON resolution
+        self.send_data(self.width & 0xFF)
+        self.send_data((self.height >> 8) & 0xFF)
+        self.send_data(self.height & 0xFF)
 
-        # Calculate and send width (low byte, high byte if needed)
-        width_low: int = self.width & 0xFF
-        width_high: int = (self.width >> 8) & 0xFF
+        logger.debug(f"Display initialized: {self.width}x{self.height}")
 
-        # Calculate and send height
-        height_low: int = self.height & 0xFF
-        height_high: int = (self.height >> 8) & 0xFF
+        return 0
 
-        # Send resolution data
-        # Format typically: width_low, width_high, height_low, height_high
-        # But some displays use: width, height_high, height_low
+    def init_partial(self, height: int) -> int:
+        """
+        Initialize display for partial area refresh from top-left (0,0).
 
-        # Standard format
-        # self.send_data(width_low)
-        # self.send_data(width_high)
-        # self.send_data(height_low)
-        # self.send_data(height_high)
+        IMPORTANT LIMITATIONS:
+        - Always updates from position (0,0) - cannot change position
+        - Takes same time as full refresh (~21s) - no speed benefit
+        - Only benefit: preserves static content below the partial area
 
-        # Alternative format
-        self.send_data(width_low)
-        self.send_data(height_high)
-        self.send_data(height_low)
+        Use case: Display with dynamic top portion and static bottom portion.
+        Example: Clock at top (updates frequently) with labels at bottom (static)
 
-        logger.debug(f"Setting resolution to {self.width}x{self.height}")
-        logger.debug(f"Resolution bytes: {width_low:02x} {width_high:02x} {height_low:02x} {height_high:02x}")
+        Args:
+            height: Height of the partial area to update (0 to 384)
 
-        # VCOM DC Setting - Uncomment to adjust contrast/ghosting
-        # Controls the common voltage for better image quality
-        # self.send_command(VCM_DC_SETTING_REGISTER)
-        # self.send_data(0x0A)
+        Returns:
+            0 on success, -1 on failure
+        """
+        # Set resolution to partial area size
+        # This controls which pixels get refreshed
+        self.send_command(0x61)  # TCON resolution
+        self.send_data(self.width & 0xFF)
+        self.send_data((height >> 8) & 0xFF)
+        self.send_data(height & 0xFF)
+
+        logger.debug(f"Partial area configured: {self.width}x{height} from (0,0)")
+        logger.debug("Note: Refresh takes ~21s (same as full screen)")
 
         return 0
 
@@ -323,8 +377,8 @@ class EPD:
         Convert a PIL Image to display buffer format.
 
         Transforms an image into a byte array compatible with the e-ink display.
-        Supports both vertical (matching display orientation) and horizontal
-        (rotated) image inputs. Black pixels are set as 0 bits, white as 1 bits.
+        Supports both portrait (168x384) and landscape (384x168) orientations.
+        Black pixels are set as 0 bits, white as 1 bits.
 
         Args:
             image: PIL Image object to convert
@@ -332,29 +386,32 @@ class EPD:
         Returns:
             List of bytes representing the image in display format
         """
-        logger.debug("bufsiz = ", int(self.width / 8) * self.height)
         buf: List[int] = [0xFF] * (int(self.width / 8) * self.height)
         image_monocolor: Image.Image = image.convert('1')
-        imwidth: int
-        imheight: int
         imwidth, imheight = image_monocolor.size
         pixels = image_monocolor.load()
-        logger.debug("imwidth = %d, imheight = %d", imwidth, imheight)
+
+        logger.debug(f"Converting image: {imwidth}x{imheight}")
+
         if imwidth == self.width and imheight == self.height:
-            logger.debug("Vertical")
+            # Portrait orientation (matches display native)
+            logger.debug("Portrait orientation")
             for y in range(imheight):
                 for x in range(imwidth):
-                    # Set the bits for the column of pixels at the current position.
                     if pixels[x, y] == 0:
                         buf[int((x + y * self.width) / 8)] &= ~(0x80 >> (x % 8))
         elif imwidth == self.height and imheight == self.width:
-            logger.debug("Horizontal")
+            # Landscape orientation (rotated 90°)
+            logger.debug("Landscape orientation")
             for y in range(imheight):
                 for x in range(imwidth):
                     newx: int = y
                     newy: int = self.height - x - 1
                     if pixels[x, y] == 0:
                         buf[int((newx + newy * self.width) / 8)] &= ~(0x80 >> (y % 8))
+        else:
+            logger.warning(f"Image size {imwidth}x{imheight} doesn't match display")
+
         return buf
 
     def display(self, blackimage: Optional[List[int]], ryimage: Optional[List[int]]) -> None:
@@ -362,63 +419,130 @@ class EPD:
         Update the e-ink display with new image data.
 
         Sends black/white image data and red/yellow image data to the display
-        controller and triggers a screen refresh.
+        controller and triggers a screen refresh. Takes approximately 21 seconds.
 
         Args:
             blackimage: Buffer containing black/white pixel data (None to skip)
             ryimage: Buffer containing red/yellow pixel data (None to skip)
         """
         if blackimage is not None:
-            self.send_command(0X10)
+            self.send_command(0x10)  # Write BW RAM
             for i in range(0, int(self.width * self.height / 8)):
                 self.send_data(blackimage[i])
+
         if ryimage is not None:
-            self.send_command(0X13)
+            self.send_command(0x13)  # Write RED RAM
             for i in range(0, int(self.width * self.height / 8)):
                 self.send_data(ryimage[i])
 
+        self.send_command(0x12)  # Display refresh
+        self.ReadBusy()
+
+    def display_partial(self, blackimage: List[int], height: int) -> None:
+        """
+        Update only a partial area of the display from top-left (0,0).
+
+        IMPORTANT: Call init_partial(height) first to configure the area.
+
+        LIMITATIONS:
+        - Always starts from position (0,0) - cannot be moved
+        - Takes ~21 seconds (same as full screen) - no speed benefit
+        - Red/yellow layer not supported for partial updates
+
+        BENEFIT:
+        - Static content below the partial area is preserved without refresh
+        - Reduces ghosting accumulation on static elements
+
+        Args:
+            blackimage: Buffer for the partial area (must match configured height)
+            height: Height of the partial area (must match init_partial call)
+        """
+        buffer_size = int(self.width * height / 8)
+
+        if len(blackimage) != buffer_size:
+            logger.warning(f"Buffer size mismatch: {len(blackimage)} != {buffer_size}")
+
+        # Write black/white data for partial area
+        self.send_command(0x10)
+        for i in range(min(len(blackimage), buffer_size)):
+            self.send_data(blackimage[i])
+
+        # Clear red/yellow layer for partial area
+        self.send_command(0x13)
+        for i in range(buffer_size):
+            self.send_data(0xFF)
+
+        # Trigger refresh (will only update the configured partial area)
         self.send_command(0x12)
         self.ReadBusy()
 
-    def separate_colors(self, image_path: str, use_dithering: bool = True) -> Tuple[Image.Image, Image.Image]:
+    def getbuffer_partial(self, image: Image.Image, height: int) -> List[int]:
         """
-        Separates colors using indexed palette
+        Convert a partial image to display buffer format.
 
-        Handles transparency different color modes and converts them for the e-ink display.
+        The image should be sized for the partial area (168 x height).
 
         Args:
-            image_path: Path to the source image file (PNG, JPEG, WebP, BMP, etc.)
-            use_dithering: Whether to apply Floyd-Steinberg dithering for better gradients
+            image: PIL Image in portrait orientation (168 x height)
+            height: Height of the partial area
 
         Returns:
-            Tuple of (HBlackimage, HRYimage) ready for display
+            Buffer for the partial area
         """
-        # Load the original image
+        buf: List[int] = [0xFF] * (int(self.width * height / 8))
+        image_mono = image.convert('1')
+        imwidth, imheight = image_mono.size
+        pixels = image_mono.load()
+
+        if imwidth != self.width or imheight != height:
+            logger.warning(f"Partial image size {imwidth}x{imheight} doesn't match {self.width}x{height}")
+            return buf
+
+        logger.debug(f"Converting partial image: {imwidth}x{imheight}")
+
+        for y in range(imheight):
+            for x in range(imwidth):
+                if pixels[x, y] == 0:
+                    buf[int((x + y * self.width) / 8)] &= ~(0x80 >> (x % 8))
+
+        return buf
+
+    def separate_colors(self, image_path: str, use_dithering: bool = True) -> Tuple[Image.Image, Image.Image]:
+        """
+        Separate an image into black/white and red/yellow layers.
+
+        Handles transparency, different color modes, and converts them for
+        the e-ink display's three-color palette.
+
+        Args:
+            image_path: Path to the source image file
+            use_dithering: Whether to apply Floyd-Steinberg dithering
+
+        Returns:
+            Tuple of (black_image, red_yellow_image) ready for display
+        """
+        # Load and convert image
         original: Image.Image = Image.open(image_path)
 
-        # Handle different image modes
+        # Handle transparency
         if original.mode in ('RGBA', 'LA', 'PA'):
-            # Images with alpha channel - composite onto white background
             background = Image.new('RGB', original.size, (255, 255, 255))
             if original.mode == 'P':
-                # Convert palette mode to RGBA first
                 original = original.convert('RGBA')
-            background.paste(original, mask=original.split()[-1])  # Use alpha as mask
+            background.paste(original, mask=original.split()[-1])
             original = background
         elif original.mode != 'RGB':
-            # Any other mode - force to RGB
             original = original.convert('RGB')
 
         width, height = original.size
 
-        # Validate dimensions
+        # Resize if needed
         if width != self.width or height != self.height:
-            logger.warning(f"Image dimensions {width}x{height} don't match display {self.width}x{self.height}")
-            logger.info("Resizing image to fit display...")
+            logger.warning(f"Resizing {width}x{height} to {self.width}x{self.height}")
             original = original.resize((self.width, self.height), Image.Resampling.LANCZOS)
             width, height = self.width, self.height
 
-        # Create 3-color palette
+        # Create 3-color palette (black, white, red)
         pal_image = Image.new("P", (1, 1))
         pal_image.putpalette(
             (0, 0, 0,  # Index 0: Black
@@ -427,32 +551,27 @@ class EPD:
             + (0, 0, 0) * 253  # Pad to 256 colors
         )
 
-        # Quantize to palette with optional dithering
+        # Quantize to palette
         dither_mode = Image.Dither.FLOYDSTEINBERG if use_dithering else Image.Dither.NONE
         quantized = original.quantize(palette=pal_image, dither=dither_mode)
-
-        # Work directly with palette indices (0, 1, or 2)
         pixel_data = list(quantized.getdata())
 
-        # Create output images in mode '1' (pure black/white bitmap)
-        hblackimage = Image.new('1', (width, height), 1)  # Start white (1)
-        hryimage = Image.new('1', (width, height), 1)
+        # Create output layers
+        black_image = Image.new('1', (width, height), 1)
+        red_image = Image.new('1', (width, height), 1)
+        black_pixels = black_image.load()
+        red_pixels = red_image.load()
 
-        black_pixels = hblackimage.load()
-        ry_pixels = hryimage.load()
-
-        # Process by index - fast and efficient
+        # Separate colors
         for i, color_index in enumerate(pixel_data):
             x = i % width
             y = i // width
-
             if color_index == 0:  # Black
                 black_pixels[x, y] = 0
             elif color_index == 2:  # Red/Yellow
-                ry_pixels[x, y] = 0
-            # Index 1 (white) - already set to 1
+                red_pixels[x, y] = 0
 
-        return hblackimage, hryimage
+        return black_image, red_image
 
     def Clear(self) -> None:
         """
@@ -461,12 +580,13 @@ class EPD:
         Sends all-white data to both black and red/yellow buffers,
         then triggers a refresh to clear the screen.
         """
-        self.send_command(0X10)
+        self.send_command(0x10)
         for i in range(0, int(self.width * self.height / 8)):
-            self.send_data(0xff)
-        self.send_command(0X13)
+            self.send_data(0xFF)
+
+        self.send_command(0x13)
         for i in range(0, int(self.width * self.height / 8)):
-            self.send_data(0xff)
+            self.send_data(0xFF)
 
         self.send_command(0x12)
         self.ReadBusy()
@@ -475,12 +595,12 @@ class EPD:
         """
         Put the display into deep sleep mode.
 
-        Powers down the display controller and exits to zero power consumption.
+        Powers down the display controller for zero power consumption.
         Display must be reinitialized with init() before next use.
         """
-        self.send_command(0X02)  # power off
+        self.send_command(0x02)  # Power off
         self.ReadBusy()
-        self.send_command(0X07)  # deep sleep
+        self.send_command(0x07)  # Deep sleep
         self.send_data(0xA5)
 
         epdconfig.delay_ms(2000)
