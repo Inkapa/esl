@@ -4,8 +4,9 @@
 import logging
 import esl
 import sys
+import os
 from PIL import Image, ImageDraw, ImageFont
-from typing import Tuple
+from typing import Tuple, Optional
 
 logging.basicConfig(level=logging.DEBUG)
 
@@ -15,9 +16,35 @@ DISPLAY_HEIGHT = 384
 MARGIN = 10  # Pixel margin from edges
 
 
+def find_available_font() -> Optional[str]:
+    """
+    Try to find an available TrueType font on the system.
+
+    Returns:
+        Path to font file, or None if no font found
+    """
+    # List of common font paths to try
+    font_paths = [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+        "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
+        "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+    ]
+
+    for font_path in font_paths:
+        if os.path.exists(font_path):
+            logging.info(f"Found font: {font_path}")
+            return font_path
+
+    logging.warning("No TrueType fonts found, will use PIL default font")
+    return None
+
+
 def calculate_optimal_font_size(text: str, width: int, height: int,
-                                font_path: str = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-                                min_size: int = 10, max_size: int = 200) -> Tuple[ImageFont.FreeTypeFont, int]:
+                                font_path: Optional[str] = None,
+                                min_size: int = 10, max_size: int = 200) -> Tuple[ImageFont.ImageFont, int]:
     """
     Calculate the optimal font size to fit text within given dimensions.
 
@@ -25,7 +52,15 @@ def calculate_optimal_font_size(text: str, width: int, height: int,
     within the specified width and height constraints.
     """
 
-    def get_text_dimensions(font: ImageFont.FreeTypeFont, text: str,
+    # Check if we can use TrueType fonts
+    use_truetype = font_path is not None and os.path.exists(font_path)
+
+    if not use_truetype:
+        logging.warning("Using PIL default font (not scalable)")
+        default_font = ImageFont.load_default()
+        return default_font, 10  # Default font is roughly size 10
+
+    def get_text_dimensions(font: ImageFont.ImageFont, text: str,
                             max_width: int) -> Tuple[int, int]:
         """Calculate text dimensions with word wrapping."""
         dummy_img = Image.new('1', (1, 1))
@@ -78,13 +113,7 @@ def calculate_optimal_font_size(text: str, width: int, height: int,
     while low <= high:
         mid = (low + high) // 2
 
-        try:
-            font = ImageFont.truetype(font_path, mid)
-        except IOError:
-            logging.warning(f"Font not found at {font_path}, using default")
-            font = ImageFont.load_default()
-            return font, mid
-
+        font = ImageFont.truetype(font_path, mid)
         text_width, text_height = get_text_dimensions(font, text, width)
 
         if text_width <= width and text_height <= height:
@@ -93,16 +122,12 @@ def calculate_optimal_font_size(text: str, width: int, height: int,
         else:
             high = mid - 1
 
-    try:
-        final_font = ImageFont.truetype(font_path, best_size)
-    except IOError:
-        final_font = ImageFont.load_default()
-
+    final_font = ImageFont.truetype(font_path, best_size)
     return final_font, best_size
 
 
 def draw_wrapped_text(draw: ImageDraw.ImageDraw, text: str,
-                      font: ImageFont.FreeTypeFont,
+                      font: ImageFont.ImageFont,
                       width: int, height: int) -> None:
     """
     Draw text with word wrapping, centered on the canvas.
@@ -153,8 +178,7 @@ def draw_wrapped_text(draw: ImageDraw.ImageDraw, text: str,
         y += line_heights[i] + line_spacing
 
 
-def display_text(text: str, orientation: str = "portrait", color: str = "black",
-                 font_path: str = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf") -> None:
+def display_text(text: str, orientation: str = "portrait", color: str = "black") -> None:
     """
     Display text on the e-ink screen with automatic font sizing.
 
@@ -162,8 +186,10 @@ def display_text(text: str, orientation: str = "portrait", color: str = "black",
         text: Text to display
         orientation: "portrait" (168x384) or "landscape" (384x168)
         color: "black" or "red" for text color
-        font_path: Path to TrueType font file
     """
+    # Find available font
+    font_path = find_available_font()
+
     # Determine image dimensions based on orientation
     if orientation.lower() == "landscape":
         img_width = DISPLAY_HEIGHT  # 384
